@@ -57,7 +57,9 @@ def generate_audited_detailed_excel(
     base_lookup = {}
     if df_base_classified is not None:
         for _, r in df_base_classified.iterrows():
-            base_lookup[str(r.get("codigo", "")).strip()] = float(r.get("saldo_final", 0.0))
+            raw_c = str(r.get("codigo", "")).strip()
+            c_code = raw_c[:-2] if raw_c.endswith(".0") else raw_c
+            base_lookup[c_code.lstrip("'").strip()] = float(r.get("saldo_final", 0.0))
             
     # Clean period names for subtitle
     p_curr_clean = period_current.replace("Dic ", "").replace("Agos ", "").replace("Ene ", "")
@@ -243,7 +245,7 @@ def generate_audited_detailed_excel(
     # =========================================================================
     # SHEET 2: EERR COMPARATIVO
     # =========================================================================
-    ws_is = wb.create_sheet(title="EERR Cmparativo")
+    ws_is = wb.create_sheet(title="EERR Comparativo")
     ws_is.views.sheetView[0].showGridLines = True
     
     ws_is.merge_cells("A2:G2")
@@ -282,20 +284,35 @@ def generate_audited_detailed_excel(
     ws_is.cell(row=7, column=6, value=period_base).font = header_col_font
     ws_is.cell(row=7, column=6).alignment = align_right
     
-    is_df = df_current_classified[(df_current_classified["sheet_target"] == "EERR") | (df_current_classified["seccion"] == "ESTADO DE RESULTADOS")]
+    is_df = df_current_classified[(df_current_classified["sheet_target"] == "EERR") | (df_current_classified["seccion"] == "ESTADO DE RESULTADOS") | df_current_classified["codigo"].str.startswith("4") | df_current_classified["codigo"].str.startswith("5")]
     
+    def get_eerr_line_df(df, key):
+        if key == "ingresos":
+            return df[df["rubro_clasificado"].str.contains("ingreso", case=False, na=False) | (df["rubro_clasificado"].str.contains("venta", case=False, na=False) & ~df["rubro_clasificado"].str.contains("costo", case=False, na=False))]
+        elif key == "costos":
+            return df[df["rubro_clasificado"].str.contains("costo de venta", case=False, na=False) | (df["rubro_clasificado"].str.contains("costo", case=False, na=False) & ~df["rubro_clasificado"].str.contains("financier", case=False, na=False))]
+        elif key == "admin":
+            return df[df["rubro_clasificado"].str.contains("administra", case=False, na=False)]
+        elif key == "financieros":
+            return df[df["rubro_clasificado"].str.contains("financier", case=False, na=False) | df["rubro_clasificado"].str.contains("interes", case=False, na=False)]
+        elif key == "cambio":
+            return df[df["rubro_clasificado"].str.contains("cambio", case=False, na=False)]
+        elif key == "monetaria":
+            return df[df["rubro_clasificado"].str.contains("monetaria", case=False, na=False) | df["rubro_clasificado"].str.contains("reajuste", case=False, na=False)]
+        return df.iloc[0:0]
+
     curr_is_row = 8
     
     eerr_sections = [
-        ("Ingresos de Actividades Ordinarias", "Ingresos de Actividades Ordinarias", 1),
-        ("Costo de Ventas", "Costo de Ventas", -1),
-        ("GANANCIA BRUTA", "GANANCIA BRUTA", 0),
-        ("Gastos de Administración", "Gastos de Administración", -1),
-        ("GANANCIAS (PÉRDIDAS) OPERACIONALES", "GANANCIAS (PÉRDIDAS) OPERACIONALES", 0),
-        ("Costos Financieros", "Costos Financieros", -1),
-        ("Diferencias de cambios por conversión", "Diferencias de cambios por conversión", -1),
-        ("Corrección Monetaria", "Corrección Monetaria", -1),
-        ("GANANCIA (PÉRDIDA) DEL EJERCICIO", "GANANCIA (PÉRDIDA) DEL EJERCICIO", 0)
+        ("ingresos", "Ingresos de Actividades Ordinarias", 1),
+        ("costos", "Costo de Ventas", -1),
+        ("bruta", "GANANCIA BRUTA", 0),
+        ("admin", "Gastos de Administración y Ventas", -1),
+        ("operacional", "GANANCIAS (PÉRDIDAS) OPERACIONALES", 0),
+        ("financieros", "Costos Financieros", -1),
+        ("cambio", "Diferencias de Cambio", -1),
+        ("monetaria", "Corrección Monetaria", -1),
+        ("ejercicio", "GANANCIA (PÉRDIDA) DEL EJERCICIO", 0)
     ]
     
     tot_ing_curr = 0.0
@@ -312,7 +329,7 @@ def generate_audited_detailed_excel(
     tot_tc_base = 0.0
     tot_cm_base = 0.0
     
-    for rub_key, rub_label, multiplier in eerr_sections:
+    for sec_key, rub_label, multiplier in eerr_sections:
         if multiplier == 0:
             # Calculated line
             ws_is.cell(row=curr_is_row, column=1, value=rub_label).font = bold_title
@@ -341,26 +358,26 @@ def generate_audited_detailed_excel(
             
             curr_is_row += 2
         else:
-            sub_is_df = is_df[is_df["rubro_clasificado"] == rub_key]
+            sub_is_df = get_eerr_line_df(is_df, sec_key)
             sub_tot_curr = sub_is_df["saldo_final"].sum()
             sub_tot_base = sum(base_lookup.get(str(c).strip(), 0.0) for c in sub_is_df["codigo"])
             
-            if rub_key == "Ingresos de Actividades Ordinarias":
+            if sec_key == "ingresos":
                 tot_ing_curr = sub_tot_curr
                 tot_ing_base = sub_tot_base
-            elif rub_key == "Costo de Ventas":
+            elif sec_key == "costos":
                 tot_cos_curr = sub_tot_curr
                 tot_cos_base = sub_tot_base
-            elif rub_key == "Gastos de Administración":
+            elif sec_key == "admin":
                 tot_adm_curr = sub_tot_curr
                 tot_adm_base = sub_tot_base
-            elif rub_key == "Costos Financieros":
+            elif sec_key == "financieros":
                 tot_fin_curr = sub_tot_curr
                 tot_fin_base = sub_tot_base
-            elif "cambio" in rub_key.lower():
+            elif sec_key == "cambio":
                 tot_tc_curr = sub_tot_curr
                 tot_tc_base = sub_tot_base
-            elif "corrección" in rub_key.lower():
+            elif sec_key == "monetaria":
                 tot_cm_curr = sub_tot_curr
                 tot_cm_base = sub_tot_base
                 

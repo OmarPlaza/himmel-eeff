@@ -48,15 +48,21 @@ def compare_classified_balances(df_base: pd.DataFrame, df_current: pd.DataFrame,
     curr_acc = df_current[["codigo", "nombre_cuenta", "rubro_clasificado", "saldo_final"]].copy()
     curr_acc.rename(columns={"saldo_final": "saldo_actual", "nombre_cuenta": "nombre_actual"}, inplace=True)
     
-    merged_acc = pd.merge(base_acc, curr_acc, on="codigo", how="outer").fillna(0.0)
+    merged_acc = pd.merge(base_acc, curr_acc, on="codigo", how="outer")
+    merged_acc["saldo_base"] = merged_acc["saldo_base"].fillna(0.0)
+    merged_acc["saldo_actual"] = merged_acc["saldo_actual"].fillna(0.0)
+    merged_acc["nombre_base"] = merged_acc["nombre_base"].fillna("").astype(str)
+    merged_acc["nombre_actual"] = merged_acc["nombre_actual"].fillna("").astype(str)
+    merged_acc["rubro_clasificado_x"] = merged_acc["rubro_clasificado_x"].fillna("").astype(str)
+    merged_acc["rubro_clasificado_y"] = merged_acc["rubro_clasificado_y"].fillna("").astype(str)
     
     # Fill names
     merged_acc["nombre_cuenta"] = merged_acc.apply(
-        lambda r: r["nombre_actual"] if str(r["nombre_actual"]) != "0.0" and str(r["nombre_actual"]) != "" else r["nombre_base"], axis=1
-    )
+        lambda r: r["nombre_actual"] if r["nombre_actual"] != "" else r["nombre_base"], axis=1
+    ).astype(str)
     merged_acc["rubro_clasificado"] = merged_acc.apply(
-        lambda r: r["rubro_clasificado_y"] if str(r["rubro_clasificado_y"]) != "0.0" and str(r["rubro_clasificado_y"]) != "" else r["rubro_clasificado_x"], axis=1
-    )
+        lambda r: r["rubro_clasificado_y"] if r["rubro_clasificado_y"] != "" else r["rubro_clasificado_x"], axis=1
+    ).astype(str)
     
     merged_acc["variacion_nominal"] = merged_acc["saldo_actual"] - merged_acc["saldo_base"]
     merged_acc["variacion_pct"] = merged_acc.apply(calc_pct, axis=1)
