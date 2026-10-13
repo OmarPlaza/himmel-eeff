@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import io
 import os
 import sys
+from typing import Any, Dict, List, Optional, Tuple
 
 # Add project root to sys.path
 sys.path.append(os.path.dirname(__file__))
@@ -88,9 +89,43 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Default paths for Himmel SpA
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+LOCAL_2024 = os.path.join(PROJECT_ROOT, "balance_base_2024.xlsx")
+LOCAL_2025 = os.path.join(PROJECT_ROOT, "balance_base_2025.xlsx")
 USER_FOLDER = r"C:\Users\omarp\OneDrive - himmel\EEFF 2025 Himmel"
 DEFAULT_2024_PATH = os.path.join(USER_FOLDER, "Balance 2024 Himmel Spa 16 04 2025.xlsx")
 DEFAULT_2025_PATH = os.path.join(USER_FOLDER, "Balance Himmel 2025.xlsx")
+
+def get_himmel_default_paths():
+    p24 = LOCAL_2024 if os.path.exists(LOCAL_2024) else (DEFAULT_2024_PATH if os.path.exists(DEFAULT_2024_PATH) else None)
+    p25 = LOCAL_2025 if os.path.exists(LOCAL_2025) else (DEFAULT_2025_PATH if os.path.exists(DEFAULT_2025_PATH) else None)
+    return p24, p25
+
+def clean_code(c: Any) -> str:
+    if pd.isna(c) or c is None:
+        return ""
+    s = str(c).strip()
+    if s.endswith(".0"):
+        s = s[:-2]
+    return s.lstrip("'").strip()
+
+def load_default_himmel_data():
+    p24, p25 = get_himmel_default_paths()
+    if p24 and p25:
+        df_24, _ = parse_8_column_balance(p24)
+        df_25, _ = parse_8_column_balance(p25)
+        st.session_state.df_base_8col = df_24
+        st.session_state.df_current_8col = df_25
+        st.session_state.df_base_classified = map_and_classify_dataframe(df_24)
+        st.session_state.df_current_classified = map_and_classify_dataframe(df_25)
+        st.session_state.current_period = "Dic 2025"
+        st.session_state.base_period = "Dic 2024"
+    else:
+        demo_base, demo_curr = create_sample_balances()
+        st.session_state.df_base_8col = demo_base
+        st.session_state.df_current_8col = demo_curr
+        st.session_state.df_base_classified = map_and_classify_dataframe(demo_base)
+        st.session_state.df_current_classified = map_and_classify_dataframe(demo_curr)
 
 # Initialize Session State
 if "df_current_8col" not in st.session_state:
@@ -108,21 +143,9 @@ if "current_period" not in st.session_state:
 if "base_period" not in st.session_state:
     st.session_state.base_period = "Dic 2025"
 
-# Auto-load real files if available on disk
+# Auto-load real files if available on disk (local or cloud)
 if st.session_state.df_current_8col is None:
-    if os.path.exists(DEFAULT_2025_PATH) and os.path.exists(DEFAULT_2024_PATH):
-        df_24, _ = parse_8_column_balance(DEFAULT_2024_PATH)
-        df_25, _ = parse_8_column_balance(DEFAULT_2025_PATH)
-        st.session_state.df_base_8col = df_24
-        st.session_state.df_current_8col = df_25
-        st.session_state.df_base_classified = map_and_classify_dataframe(df_24)
-        st.session_state.df_current_classified = map_and_classify_dataframe(df_25)
-    else:
-        demo_base, demo_curr = create_sample_balances()
-        st.session_state.df_base_8col = demo_base
-        st.session_state.df_current_8col = demo_curr
-        st.session_state.df_base_classified = map_and_classify_dataframe(demo_base)
-        st.session_state.df_current_classified = map_and_classify_dataframe(demo_curr)
+    load_default_himmel_data()
 
 # Sidebar: Company & Configuration
 with st.sidebar:
@@ -142,16 +165,10 @@ with st.sidebar:
     st.divider()
     
     st.subheader("⚡ Acciones Rápidas")
-    if st.button("🔄 Recargar Balances de Himmel", use_container_width=True):
-        if os.path.exists(DEFAULT_2025_PATH) and os.path.exists(DEFAULT_2024_PATH):
-            df_24, _ = parse_8_column_balance(DEFAULT_2024_PATH)
-            df_25, _ = parse_8_column_balance(DEFAULT_2025_PATH)
-            st.session_state.df_base_8col = df_24
-            st.session_state.df_current_8col = df_25
-            st.session_state.df_base_classified = map_and_classify_dataframe(df_24)
-            st.session_state.df_current_classified = map_and_classify_dataframe(df_25)
-            st.success("Balances recargados.")
-            st.rerun()
+    if st.button("🔄 Recargar Balances Oficiales", use_container_width=True):
+        load_default_himmel_data()
+        st.success("Balances oficiales recargados exitosamente.")
+        st.rerun()
             
     if st.button("🗑️ Limpiar Datos", use_container_width=True):
         st.session_state.df_current_8col = None
@@ -181,7 +198,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
 base_lookup = {}
 if st.session_state.df_base_classified is not None:
     for _, r in st.session_state.df_base_classified.iterrows():
-        base_lookup[str(r.get("codigo", "")).strip()] = float(r.get("saldo_final", 0.0))
+        base_lookup[clean_code(r.get("codigo", ""))] = float(r.get("saldo_final", 0.0))
 
 # ==============================================================================
 # TAB 1: BALANCE CLASIFICADO AUDITADO (EXACTO FORMATO IMAGEN DERECHA)
@@ -247,7 +264,7 @@ with tab1:
                     for sub_name in subrubros:
                         sub_df = rub_df[rub_df["subrubro"] == sub_name]
                         sub_tot_curr = sub_df["saldo_final"].sum()
-                        sub_tot_base = sum(base_lookup.get(str(c).strip(), 0.0) for c in sub_df["codigo"])
+                        sub_tot_base = sum(base_lookup.get(clean_code(c), 0.0) for c in sub_df["codigo"])
                         sub_nota = sub_df.iloc[0].get("nota_auditada", "")
                         
                         s_c1, s_c2, s_c3, s_c4, s_c5, s_c6 = st.columns([5, 2, 2, 1, 2.5, 2.5])
@@ -257,7 +274,7 @@ with tab1:
                         with s_c6: st.markdown(f"<div style='text-align: right; font-weight: bold;'>{sub_tot_base:,.0f}</div>", unsafe_allow_html=True)
                         
                         for _, acc_r in sub_df.iterrows():
-                            acc_code = str(acc_r.get("codigo", "")).strip()
+                            acc_code = clean_code(acc_r.get("codigo", ""))
                             acc_name = str(acc_r.get("nombre_cuenta", "")).strip()
                             acc_curr = float(acc_r.get("saldo_final", 0.0))
                             acc_base = base_lookup.get(acc_code, 0.0)
@@ -273,7 +290,7 @@ with tab1:
                         st.write("")
                         
             tot_sec_curr = sec_df["saldo_final"].sum()
-            tot_sec_base = sum(base_lookup.get(str(c).strip(), 0.0) for c in sec_df["codigo"])
+            tot_sec_base = sum(base_lookup.get(clean_code(c), 0.0) for c in sec_df["codigo"])
             
             st.divider()
             t_c1, t_c2, t_c3, t_c4, t_c5, t_c6 = st.columns([5, 2, 2, 1, 2.5, 2.5])
@@ -304,45 +321,86 @@ with tab2:
         st.divider()
         
         df_curr = st.session_state.df_current_classified
-        is_df = df_curr[(df_curr["sheet_target"] == "EERR") | (df_curr["seccion"] == "ESTADO DE RESULTADOS")]
+        is_df = df_curr[(df_curr["sheet_target"] == "EERR") | (df_curr["seccion"] == "ESTADO DE RESULTADOS") | df_curr["codigo"].str.startswith("4") | df_curr["codigo"].str.startswith("5")]
         
+        def get_eerr_line_df(df, key):
+            if df is None or df.empty:
+                return pd.DataFrame()
+            if key == "ingresos":
+                return df[df["rubro_clasificado"].str.contains("ingreso", case=False, na=False) | (df["rubro_clasificado"].str.contains("venta", case=False, na=False) & ~df["rubro_clasificado"].str.contains("costo", case=False, na=False))]
+            elif key == "costos":
+                return df[df["rubro_clasificado"].str.contains("costo de venta", case=False, na=False) | (df["rubro_clasificado"].str.contains("costo", case=False, na=False) & ~df["rubro_clasificado"].str.contains("financier", case=False, na=False))]
+            elif key == "admin":
+                return df[df["rubro_clasificado"].str.contains("administra", case=False, na=False)]
+            elif key == "financieros":
+                return df[df["rubro_clasificado"].str.contains("financier", case=False, na=False) | df["rubro_clasificado"].str.contains("interes", case=False, na=False)]
+            elif key == "cambio":
+                return df[df["rubro_clasificado"].str.contains("cambio", case=False, na=False)]
+            elif key == "monetaria":
+                return df[df["rubro_clasificado"].str.contains("monetaria", case=False, na=False) | df["rubro_clasificado"].str.contains("reajuste", case=False, na=False)]
+            return df.iloc[0:0]
+
         eerr_sections = [
-            ("Ingresos de Actividades Ordinarias", "Ingresos de Actividades Ordinarias", 1),
-            ("Costo de Ventas", "Costo de Ventas", -1),
-            ("GANANCIA BRUTA", "GANANCIA BRUTA", 0),
-            ("Gastos de Administración", "Gastos de Administración", -1),
-            ("GANANCIAS (PÉRDIDAS) OPERACIONALES", "GANANCIAS (PÉRDIDAS) OPERACIONALES", 0),
-            ("Costos Financieros", "Costos Financieros", -1),
-            ("Diferencias de cambios por conversión", "Diferencias de cambios por conversión", -1),
-            ("Corrección Monetaria", "Corrección Monetaria", -1),
-            ("GANANCIA (PÉRDIDA) DEL EJERCICIO", "GANANCIA (PÉRDIDA) DEL EJERCICIO", 0)
+            ("ingresos", "Ingresos de Actividades Ordinarias", 1),
+            ("costos", "Costo de Ventas", -1),
+            ("bruta", "GANANCIA BRUTA", 0),
+            ("admin", "Gastos de Administración y Ventas", -1),
+            ("operacional", "GANANCIAS (PÉRDIDAS) OPERACIONALES", 0),
+            ("financieros", "Costos Financieros", -1),
+            ("cambio", "Diferencias de Cambio", -1),
+            ("monetaria", "Corrección Monetaria", -1),
+            ("ejercicio", "GANANCIA (PÉRDIDA) DEL EJERCICIO", 0)
         ]
         
-        tot_ing_curr = is_df[is_df["rubro_clasificado"] == "Ingresos de Actividades Ordinarias"]["saldo_final"].sum()
-        tot_cos_curr = is_df[is_df["rubro_clasificado"] == "Costo de Ventas"]["saldo_final"].sum()
-        tot_adm_curr = is_df[is_df["rubro_clasificado"] == "Gastos de Administración"]["saldo_final"].sum()
-        tot_fin_curr = is_df[is_df["rubro_clasificado"] == "Costos Financieros"]["saldo_final"].sum()
-        tot_tc_curr = is_df[is_df["rubro_clasificado"] == "Diferencias de cambios por conversión"]["saldo_final"].sum()
-        tot_cm_curr = is_df[is_df["rubro_clasificado"] == "Corrección Monetaria"]["saldo_final"].sum()
-        
-        for rub_key, rub_label, multiplier in eerr_sections:
+        tot_ing_curr = get_eerr_line_df(is_df, "ingresos")["saldo_final"].sum()
+        tot_cos_curr = get_eerr_line_df(is_df, "costos")["saldo_final"].sum()
+        tot_adm_curr = get_eerr_line_df(is_df, "admin")["saldo_final"].sum()
+        tot_fin_curr = get_eerr_line_df(is_df, "financieros")["saldo_final"].sum()
+        tot_tc_curr = get_eerr_line_df(is_df, "cambio")["saldo_final"].sum()
+        tot_cm_curr = get_eerr_line_df(is_df, "monetaria")["saldo_final"].sum()
+
+        tot_ing_base = sum(base_lookup.get(clean_code(c), 0.0) for c in get_eerr_line_df(is_df, "ingresos")["codigo"])
+        tot_cos_base = sum(base_lookup.get(clean_code(c), 0.0) for c in get_eerr_line_df(is_df, "costos")["codigo"])
+        tot_adm_base = sum(base_lookup.get(clean_code(c), 0.0) for c in get_eerr_line_df(is_df, "admin")["codigo"])
+        tot_fin_base = sum(base_lookup.get(clean_code(c), 0.0) for c in get_eerr_line_df(is_df, "financieros")["codigo"])
+        tot_tc_base = sum(base_lookup.get(clean_code(c), 0.0) for c in get_eerr_line_df(is_df, "cambio")["codigo"])
+        tot_cm_base = sum(base_lookup.get(clean_code(c), 0.0) for c in get_eerr_line_df(is_df, "monetaria")["codigo"])
+
+        # Also check base classified if available to capture full totals
+        if st.session_state.df_base_classified is not None:
+            df_b = st.session_state.df_base_classified
+            is_b_df = df_b[(df_b["sheet_target"] == "EERR") | (df_b["seccion"] == "ESTADO DE RESULTADOS") | df_b["codigo"].str.startswith("4") | df_b["codigo"].str.startswith("5")]
+            b_ing = get_eerr_line_df(is_b_df, "ingresos")["saldo_final"].sum()
+            b_cos = get_eerr_line_df(is_b_df, "costos")["saldo_final"].sum()
+            b_adm = get_eerr_line_df(is_b_df, "admin")["saldo_final"].sum()
+            b_fin = get_eerr_line_df(is_b_df, "financieros")["saldo_final"].sum()
+            b_tc = get_eerr_line_df(is_b_df, "cambio")["saldo_final"].sum()
+            b_cm = get_eerr_line_df(is_b_df, "monetaria")["saldo_final"].sum()
+            if b_ing > 0 or b_adm > 0:
+                tot_ing_base, tot_cos_base, tot_adm_base, tot_fin_base, tot_tc_base, tot_cm_base = b_ing, b_cos, b_adm, b_fin, b_tc, b_cm
+
+        for sec_key, rub_label, multiplier in eerr_sections:
             if multiplier == 0:
                 if rub_label == "GANANCIA BRUTA":
                     val_c = tot_ing_curr - tot_cos_curr
+                    val_b = tot_ing_base - tot_cos_base
                 elif "OPERACIONALES" in rub_label:
                     val_c = (tot_ing_curr - tot_cos_curr) - tot_adm_curr
+                    val_b = (tot_ing_base - tot_cos_base) - tot_adm_base
                 else: # Net Income
                     val_c = (tot_ing_curr - tot_cos_curr) - tot_adm_curr - tot_fin_curr - tot_tc_curr - tot_cm_curr
+                    val_b = (tot_ing_base - tot_cos_base) - tot_adm_base - tot_fin_base - tot_tc_base - tot_cm_base
                     
                 st.divider()
                 s_c1, s_c2, s_c3, s_c4, s_c5, s_c6 = st.columns([5, 2, 2, 1, 2.5, 2.5])
                 with s_c1: st.markdown(f"### **{rub_label}**")
                 with s_c5: st.markdown(f"<div style='text-align: right; font-size: 1.25rem; font-weight: bold; color: #1F4E79;'>$ {val_c:,.0f}</div>", unsafe_allow_html=True)
+                with s_c6: st.markdown(f"<div style='text-align: right; font-size: 1.25rem; font-weight: bold; color: #1F4E79;'>$ {val_b:,.0f}</div>", unsafe_allow_html=True)
                 st.divider()
             else:
-                sub_is_df = is_df[is_df["rubro_clasificado"] == rub_key]
+                sub_is_df = get_eerr_line_df(is_df, sec_key)
                 sub_tot_curr = sub_is_df["saldo_final"].sum()
-                sub_tot_base = sum(base_lookup.get(str(c).strip(), 0.0) for c in sub_is_df["codigo"])
+                sub_tot_base = sum(base_lookup.get(clean_code(c), 0.0) for c in sub_is_df["codigo"])
                 
                 s_c1, s_c2, s_c3, s_c4, s_c5, s_c6 = st.columns([5, 2, 2, 1, 2.5, 2.5])
                 with s_c1: st.markdown(f"##### **{rub_label}**")
@@ -350,7 +408,7 @@ with tab2:
                 with s_c6: st.markdown(f"<div style='text-align: right; font-weight: bold;'>{(sub_tot_base*multiplier):,.0f}</div>", unsafe_allow_html=True)
                 
                 for _, acc_r in sub_is_df.iterrows():
-                    acc_code = str(acc_r.get("codigo", "")).strip()
+                    acc_code = clean_code(acc_r.get("codigo", ""))
                     acc_name = str(acc_r.get("nombre_cuenta", "")).strip()
                     acc_curr = float(acc_r.get("saldo_final", 0.0))
                     acc_base = base_lookup.get(acc_code, 0.0)
@@ -362,24 +420,71 @@ with tab2:
                 st.write("")
 
 # ==============================================================================
-# TAB 3: CARGA DE BALANCE 8 COLUMNAS
+# TAB 3: CARGA DE BALANCES 8 COLUMNAS
 # ==============================================================================
 with tab3:
-    st.subheader("📤 Cargar Balance General de 8 Columnas")
-    st.caption("Arrastra tu archivo Excel de 8 columnas. El sistema extraerá automáticamente todas las columnas contables y las homologará.")
+    st.subheader("📤 Carga de Balances Generales de 8 Columnas")
+    st.caption("Carga los balances de 8 columnas en formato Excel (.xlsx, .xls) o CSV. El motor procesará y homologará automáticamente cada cuenta bajo IFRS / CMF.")
     
-    uploaded_file = st.file_uploader("Selecciona el Balance de 8 Columnas (.xlsx / .csv):", type=["xlsx", "xls", "csv"])
-    if uploaded_file is not None:
-        df_parsed, meta = parse_8_column_balance(uploaded_file)
-        if meta["is_valid"]:
-            st.session_state.df_current_8col = df_parsed
-            st.session_state.df_current_classified = map_and_classify_dataframe(df_parsed)
-            st.success(f"✅ Balance cargado con éxito ({len(df_parsed)} cuentas procesadas).")
-        else:
-            st.error(f"Error al procesar: {meta.get('error_message')}")
+    col_u1, col_u2 = st.columns(2)
+    
+    with col_u1:
+        st.markdown("### 🟢 1. Balance Período Actual")
+        p_act_input = st.text_input("Etiqueta Período Actual:", value=st.session_state.current_period, key="p_act_inp")
+        file_curr = st.file_uploader("Subir Balance Actual (ej: Agosto 2026):", type=["xlsx", "xls", "csv"], key="file_curr_inp")
+        if file_curr is not None:
+            df_curr_p, meta_c = parse_8_column_balance(file_curr)
+            if meta_c["is_valid"]:
+                st.session_state.df_current_8col = df_curr_p
+                st.session_state.df_current_classified = map_and_classify_dataframe(df_curr_p)
+                st.session_state.current_period = p_act_input
+                st.success(f"✅ Balance Actual procesado exitosamente ({len(df_curr_p)} cuentas).")
+                st.info(f"Hoja: `{meta_c.get('sheet_used')}` | Fila encabezado: `{meta_c.get('header_row_index')}`")
+            else:
+                st.error(f"❌ Error al procesar: {meta_c.get('error_message')}")
+                
+    with col_u2:
+        st.markdown("### 🔵 2. Balance Período Base (Comparativo)")
+        p_base_input = st.text_input("Etiqueta Período Base:", value=st.session_state.base_period, key="p_base_inp")
+        file_base = st.file_uploader("Subir Balance Base (ej: Diciembre 2025):", type=["xlsx", "xls", "csv"], key="file_base_inp")
+        if file_base is not None:
+            df_base_p, meta_b = parse_8_column_balance(file_base)
+            if meta_b["is_valid"]:
+                st.session_state.df_base_8col = df_base_p
+                st.session_state.df_base_classified = map_and_classify_dataframe(df_base_p)
+                st.session_state.base_period = p_base_input
+                st.success(f"✅ Balance Base procesado exitosamente ({len(df_base_p)} cuentas).")
+                st.info(f"Hoja: `{meta_b.get('sheet_used')}` | Fila encabezado: `{meta_b.get('header_row_index')}`")
+            else:
+                st.error(f"❌ Error al procesar: {meta_b.get('error_message')}")
+                
+        p24, p25 = get_himmel_default_paths()
+        if p25:
+            if st.button("📌 Fijar Balance Himmel 2025 Oficial como Período Base", use_container_width=True):
+                df_b25, _ = parse_8_column_balance(p25)
+                st.session_state.df_base_8col = df_b25
+                st.session_state.df_base_classified = map_and_classify_dataframe(df_b25)
+                st.session_state.base_period = "Dic 2025"
+                st.success("✅ Balance Dic 2025 cargado como Período Base.")
+                st.rerun()
+
+    st.divider()
+    m_col1, m_col2 = st.columns(2)
+    with m_col1:
+        if st.session_state.df_current_classified is not None:
+            tot_act = st.session_state.df_current_classified[st.session_state.df_current_classified["seccion"] == "ACTIVOS"]["saldo_final"].sum()
+            tot_pas_pat = st.session_state.df_current_classified[st.session_state.df_current_classified["seccion"] == "PASIVOS Y PATRIMONIO"]["saldo_final"].sum()
+            st.metric(f"Total Activos ({st.session_state.current_period})", f"${tot_act:,.0f}")
+            st.metric(f"Total Pasivo + Pat. ({st.session_state.current_period})", f"${tot_pas_pat:,.0f}", delta=f"${(tot_act - tot_pas_pat):,.0f} cuadre")
+    with m_col2:
+        if st.session_state.df_base_classified is not None:
+            tot_act_b = st.session_state.df_base_classified[st.session_state.df_base_classified["seccion"] == "ACTIVOS"]["saldo_final"].sum()
+            tot_pas_pat_b = st.session_state.df_base_classified[st.session_state.df_base_classified["seccion"] == "PASIVOS Y PATRIMONIO"]["saldo_final"].sum()
+            st.metric(f"Total Activos Base ({st.session_state.base_period})", f"${tot_act_b:,.0f}")
+            st.metric(f"Total Pasivo + Pat. Base ({st.session_state.base_period})", f"${tot_pas_pat_b:,.0f}", delta=f"${(tot_act_b - tot_pas_pat_b):,.0f} cuadre")
             
     if st.session_state.df_current_8col is not None:
-        st.markdown("#### Vista Previa del Balance de Origen (8 Columnas):")
+        st.markdown(f"#### Vista Previa del Balance de Origen ({st.session_state.current_period}):")
         st.dataframe(
             st.session_state.df_current_8col.style.format({
                 "debito": "{:,.0f}", "credito": "{:,.0f}",
